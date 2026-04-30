@@ -1,0 +1,1132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DASS-21 Screening Tool</title>
+  
+  <!-- Load React -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Load Babel for JSX compilation -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Load SheetJS (XLSX) for Excel Export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <!-- Load Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.11.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.11.1/firebase-firestore-compat.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    /* ─── CONSTANTS ─────────────────────────────────────────────────── */
+    const ADMIN_PIN = "1234";
+
+    const QUESTIONS = [
+      { id: 1, type: "s", text: "I found it hard to wind down" },
+      { id: 2, type: "a", text: "I was aware of dryness of my mouth" },
+      { id: 3, type: "d", text: "I couldn't seem to experience any positive feeling at all" },
+      { id: 4, type: "a", text: "I experienced breathing difficulty (e.g. excessively rapid breathing, breathlessness in the absence of physical exertion)" },
+      { id: 5, type: "d", text: "I found it difficult to work up the initiative to do things" },
+      { id: 6, type: "s", text: "I tended to over-react to situations" },
+      { id: 7, type: "a", text: "I experienced trembling (e.g. in the hands)" },
+      { id: 8, type: "s", text: "I felt that I was using a lot of nervous energy" },
+      { id: 9, type: "a", text: "I was worried about situations in which I might panic and make a fool of myself" },
+      { id: 10, type: "d", text: "I felt that I had nothing to look forward to" },
+      { id: 11, type: "s", text: "I found myself getting agitated" },
+      { id: 12, type: "s", text: "I found it difficult to relax" },
+      { id: 13, type: "d", text: "I felt down-hearted and blue" },
+      { id: 14, type: "s", text: "I was intolerant of anything that kept me from getting on with what I was doing" },
+      { id: 15, type: "a", text: "I felt I was close to panic" },
+      { id: 16, type: "d", text: "I was unable to become enthusiastic about anything" },
+      { id: 17, type: "d", text: "I felt I wasn't worth much as a person" },
+      { id: 18, type: "s", text: "I felt that I was rather touchy" },
+      { id: 19, type: "a", text: "I was aware of the action of my heart in the absence of physical exertion (e.g. sense of heart rate increase, heart missing a beat)" },
+      { id: 20, type: "a", text: "I felt scared without any good reason" },
+      { id: 21, type: "d", text: "I felt that life was meaningless" },
+    ];
+
+    const OPTION_LABELS = [
+      { value: 0, short: "0", label: "Did not apply to me at all" },
+      { value: 1, short: "1", label: "Applied to me some of the time" },
+      { value: 2, short: "2", label: "Applied a good part of the time" },
+      { value: 3, short: "3", label: "Applied very much or most of the time" },
+    ];
+
+    const SEVERITY_THRESHOLDS = {
+      d: [
+        { max: 9, label: "Normal", color: "#166534", bg: "#DCFCE7" },
+        { max: 13, label: "Mild", color: "#854D0E", bg: "#FEF9C3" },
+        { max: 20, label: "Moderate", color: "#9A3412", bg: "#FFEDD5" },
+        { max: 27, label: "Severe", color: "#991B1B", bg: "#FEE2E2" },
+        { max: Infinity, label: "Extremely Severe", color: "#7F1D1D", bg: "#FCA5A5" },
+      ],
+      a: [
+        { max: 7, label: "Normal", color: "#166534", bg: "#DCFCE7" },
+        { max: 9, label: "Mild", color: "#854D0E", bg: "#FEF9C3" },
+        { max: 14, label: "Moderate", color: "#9A3412", bg: "#FFEDD5" },
+        { max: 19, label: "Severe", color: "#991B1B", bg: "#FEE2E2" },
+        { max: Infinity, label: "Extremely Severe", color: "#7F1D1D", bg: "#FCA5A5" },
+      ],
+      s: [
+        { max: 14, label: "Normal", color: "#166534", bg: "#DCFCE7" },
+        { max: 18, label: "Mild", color: "#854D0E", bg: "#FEF9C3" },
+        { max: 25, label: "Moderate", color: "#9A3412", bg: "#FFEDD5" },
+        { max: 33, label: "Severe", color: "#991B1B", bg: "#FEE2E2" },
+        { max: Infinity, label: "Extremely Severe", color: "#7F1D1D", bg: "#FCA5A5" },
+      ],
+    };
+
+    const SCORING_TABLES = {
+      d: [
+        ["0–9", "Normal", "No action required"],
+        ["10–13", "Mild", "Self-care, monitor symptoms"],
+        ["14–20", "Moderate", "Consider professional support"],
+        ["21–27", "Severe", "Seek professional help soon"],
+        ["28+", "Extremely Severe", "Urgent professional help"],
+      ],
+      a: [
+        ["0–7", "Normal", "No action required"],
+        ["8–9", "Mild", "Self-care, monitor symptoms"],
+        ["10–14", "Moderate", "Consider professional support"],
+        ["15–19", "Severe", "Seek professional help soon"],
+        ["20+", "Extremely Severe", "Urgent professional help"],
+      ],
+      s: [
+        ["0–14", "Normal", "No action required"],
+        ["15–18", "Mild", "Self-care, monitor symptoms"],
+        ["19–25", "Moderate", "Consider professional support"],
+        ["26–33", "Severe", "Seek professional help soon"],
+        ["34+", "Extremely Severe", "Urgent professional help"],
+      ],
+    };
+
+    function getSeverity(type, rawScore) {
+      const finalScore = rawScore * 2;
+      const thresholds = SEVERITY_THRESHOLDS[type];
+      return thresholds.find((t) => finalScore <= t.max) || thresholds[thresholds.length - 1];
+    }
+
+    function calcScores(answers) {
+      let d = 0, a = 0, s = 0;
+      QUESTIONS.forEach((q) => {
+        const val = answers[q.id] ?? 0;
+        if (q.type === "d") d += val;
+        else if (q.type === "a") a += val;
+        else s += val;
+      });
+      return { d, a, s, dFinal: d * 2, aFinal: a * 2, sFinal: s * 2 };
+    }
+
+    /* ─── FIREBASE CLOUD DATABASE SETUP ─────────────────────────────── */
+    // TODO: PASTE YOUR FIREBASE CONFIGURATION HERE:
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_SENDER_ID",
+      appId: "YOUR_APP_ID"
+    };
+
+    // Initialize Firebase
+    if (!firebase.apps.length) {
+      firebase.initializeApp(firebaseConfig);
+    }
+    const db = firebase.firestore();
+
+    async function loadEntries() {
+      try {
+        const snapshot = await db.collection("dass21_entries").orderBy("date", "desc").get();
+        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      } catch (e) {
+        console.error("Error loading entries from cloud:", e);
+        return [];
+      }
+    }
+
+    async function saveEntry(entry) {
+      try {
+        await db.collection("dass21_entries").add(entry);
+      } catch (e) {
+        console.error("Error saving entry to cloud:", e);
+      }
+    }
+    
+    async function clearCloudData() {
+      try {
+        const snapshot = await db.collection("dass21_entries").get();
+        const batch = db.batch();
+        snapshot.docs.forEach((doc) => {
+          batch.delete(doc.ref);
+        });
+        await batch.commit();
+      } catch (e) {
+        console.error("Error clearing cloud data:", e);
+      }
+    }
+
+    /* ─── STYLES ────────────────────────────────────────────────────── */
+    const G = () => (
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        :root {
+          --saffron: #E85D04; --saffron-dk: #C44B02; --saffron-lt: #FFF0E6;
+          --crimson: #D62828; --navy: #1E3A5F;
+          --gold-lt: #FEF3DC; --teal: #0F766E;
+          --bg: #FFFBF6; --surface: #FFFFFF; --border: #EDE8E0;
+          --text: #1A1108; --muted: #6B5E4E; --light: #9E8E7B;
+          --r: 14px; --rs: 8px;
+        }
+        html { scroll-behavior: smooth; }
+        body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+        
+        /* NAV */
+        .nav { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 2rem;
+          display: flex; align-items: center; justify-content: space-between; height: 64px;
+          position: sticky; top: 0; z-index: 200; }
+        .nav-logo { display: flex; align-items: center; gap: 10px; cursor: pointer; text-decoration: none; }
+        .nav-logo-icon { width: 36px; height: 36px; background: var(--saffron); border-radius: 10px;
+          display: flex; align-items: center; justify-content: center; font-size: 18px; }
+        .nav-logo-text { font-family: 'Playfair Display', serif; font-size: 1.25rem; font-weight: 700; color: var(--text); }
+        .nav-logo-text em { color: var(--saffron); font-style: normal; }
+        .nav-right { display: flex; gap: 0.75rem; align-items: center; }
+        .btn-nav { font-family: inherit; font-size: 0.8rem; font-weight: 600; padding: 0.42rem 1rem;
+          border-radius: 50px; cursor: pointer; border: none; transition: all 0.2s; }
+        .btn-nav-primary { background: var(--saffron); color: #fff; }
+        .btn-nav-primary:hover { background: var(--saffron-dk); }
+        .btn-nav-dark { background: var(--navy); color: #fff; }
+        .btn-nav-dark:hover { background: #152d4a; }
+        
+        /* HERO */
+        .hero { background: linear-gradient(135deg, #E85D04 0%, #C44B02 45%, #D62828 100%);
+          padding: 4rem 2rem 3.5rem; text-align: center; position: relative; overflow: hidden; }
+        .hero-dots { position: absolute; top: 0; left: 0; right: 0; height: 4px;
+          background: repeating-linear-gradient(90deg, rgba(255,255,255,.4) 0, rgba(255,255,255,.4) 8px, transparent 8px, transparent 20px); }
+        .hero-badge { display: inline-flex; align-items: center; gap: 6px;
+          background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3);
+          border-radius: 50px; padding: .3rem 1rem; font-size: .75rem; color: rgba(255,255,255,.9);
+          margin-bottom: 1.2rem; font-weight: 500; animation: fadeUp .5s ease both; }
+        .hero h1 { font-family: 'Playfair Display', serif; font-size: clamp(2rem,5vw,3rem);
+          font-weight: 700; color: #fff; line-height: 1.2; margin-bottom: .8rem; animation: fadeUp .5s .1s ease both; }
+        .hero p { font-size: .95rem; color: rgba(255,255,255,.85); max-width: 540px; margin: 0 auto 2rem;
+          line-height: 1.7; font-weight: 300; animation: fadeUp .5s .2s ease both; }
+        .hero-pills { display: flex; justify-content: center; gap: 1rem; flex-wrap: wrap; animation: fadeUp .5s .3s ease both; }
+        .hero-pill { background: rgba(255,255,255,.18); border-radius: 50px; padding: .3rem .9rem;
+          font-size: .75rem; font-weight: 500; color: rgba(255,255,255,.92); }
+        
+        /* NOTICE */
+        .notice { background: var(--gold-lt); border: 1px solid #F4C97A; border-radius: var(--r);
+          padding: .9rem 1.4rem; margin: 2rem auto; max-width: 860px;
+          display: flex; gap: 10px; align-items: flex-start; font-size: .82rem; color: #7A4F00; line-height: 1.6; }
+        
+        /* CONTAINER */
+        .container { max-width: 900px; margin: 0 auto; padding: 0 2rem; }
+        
+        /* INTRO CARD */
+        .intro-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+          padding: 2.5rem; margin: 2rem auto; max-width: 860px; }
+        .intro-card h2 { font-family: 'Playfair Display', serif; font-size: 1.5rem; font-weight: 700;
+          color: var(--text); margin-bottom: 1rem; }
+        .intro-card p { font-size: .88rem; color: var(--muted); line-height: 1.75; margin-bottom: 1rem; }
+        .subscale-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-top: 1.5rem; }
+        .subscale-chip { border-radius: var(--rs); padding: 1rem; text-align: center; }
+        .subscale-chip .sc-icon { font-size: 1.6rem; margin-bottom: 6px; }
+        .subscale-chip .sc-name { font-size: .8rem; font-weight: 700; color: var(--text); margin-bottom: 2px; }
+        .subscale-chip .sc-items { font-size: .7rem; color: var(--muted); }
+        .btn-begin { display: block; background: var(--saffron); color: #fff; border: none; border-radius: 50px;
+          padding: .9rem 2.5rem; font-size: .95rem; font-weight: 600; cursor: pointer;
+          font-family: inherit; margin: 1.8rem auto 0; transition: all .2s; width: fit-content; }
+        .btn-begin:hover { background: var(--saffron-dk); transform: translateY(-1px); }
+        
+        /* PATIENT FORM */
+        .pform-wrap { max-width: 680px; margin: 0 auto; padding: 2.5rem 2rem; }
+        .pform-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+          padding: 1.8rem; margin-bottom: 1.2rem; }
+        .pform-section h3 { font-family: 'Playfair Display', serif; font-size: 1.05rem; font-weight: 600;
+          color: var(--text); margin-bottom: 1.2rem; padding-bottom: .6rem; border-bottom: 1px solid var(--border); }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+        .form-row.full { grid-template-columns: 1fr; }
+        .form-group { display: flex; flex-direction: column; gap: 5px; }
+        .form-group label { font-size: .75rem; font-weight: 600; color: var(--muted); letter-spacing: .5px; }
+        .form-group input, .form-group select, .form-group textarea {
+          font-family: inherit; font-size: .88rem; padding: .58rem .85rem;
+          border: 1.5px solid var(--border); border-radius: var(--rs);
+          background: var(--bg); color: var(--text); outline: none; transition: border-color .2s; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { border-color: var(--saffron); }
+        .form-group textarea { resize: vertical; min-height: 70px; }
+        .consent-box { background: var(--gold-lt); border: 1px solid #F4C97A; border-radius: var(--rs);
+          padding: .9rem 1.1rem; font-size: .8rem; color: #7A4F00; line-height: 1.6; margin-bottom: 1.2rem; }
+        .consent-label { display: flex; gap: 8px; align-items: flex-start; margin-top: .6rem; cursor: pointer; }
+        .consent-label input { margin-top: 3px; accent-color: var(--saffron); }
+        .btn-start { width: 100%; background: var(--saffron); color: #fff; border: none; border-radius: 50px;
+          padding: .85rem; font-size: .92rem; font-weight: 600; cursor: pointer; font-family: inherit;
+          transition: all .2s; }
+        .btn-start:hover:not(:disabled) { background: var(--saffron-dk); transform: translateY(-1px); }
+        .btn-start:disabled { opacity: .4; cursor: not-allowed; }
+        
+        /* QUIZ */
+        .quiz-header { background: linear-gradient(135deg, #E85D04 0%, #C44B02 45%, #D62828 100%);
+          padding: 2rem 2rem 2.5rem; color: #fff; }
+        .quiz-badge { display: inline-block; background: rgba(255,255,255,.18);
+          border: 1px solid rgba(255,255,255,.3); border-radius: 50px; padding: .22rem .75rem;
+          font-size: .68rem; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+          color: rgba(255,255,255,.9); margin-bottom: .5rem; }
+        .quiz-h1 { font-family: 'Playfair Display', serif; font-size: clamp(1.4rem,3.5vw,2rem);
+          font-weight: 700; margin-bottom: .4rem; }
+        .quiz-sub { font-size: .85rem; opacity: .8; font-weight: 300; }
+        .progress-bar-wrap { background: var(--surface); border-bottom: 1px solid var(--border);
+          padding: .75rem 2rem; position: sticky; top: 64px; z-index: 150; }
+        .progress-inner { max-width: 860px; margin: 0 auto; }
+        .progress-label { font-size: .72rem; color: var(--muted); margin-bottom: 5px; font-weight: 500; }
+        .progress-track { height: 6px; background: var(--border); border-radius: 99px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--saffron); border-radius: 99px; transition: width .4s ease; }
+        .quiz-body { max-width: 860px; margin: 0 auto; padding: 2rem 2rem 3rem; }
+        .quiz-scale-legend { background: var(--gold-lt); border: 1px solid #F4C97A; border-radius: var(--r);
+          padding: .85rem 1.2rem; margin-bottom: 2rem; font-size: .8rem; color: #7A4F00; line-height: 1.6; }
+        .scale-pills { display: flex; gap: 6px; margin-top: .5rem; flex-wrap: wrap; }
+        .scale-pill { background: rgba(232,93,4,.1); color: var(--saffron-dk); border-radius: 50px;
+          padding: .18rem .7rem; font-size: .7rem; font-weight: 600; }
+        
+        .q-block { background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--r);
+          padding: 1.4rem 1.5rem; margin-bottom: 1rem; transition: border-color .2s, box-shadow .2s; }
+        .q-block.answered { border-color: var(--saffron); box-shadow: 0 2px 14px rgba(232,93,4,.08); }
+        .q-num { font-size: .65rem; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+          color: var(--saffron); margin-bottom: 5px; display: flex; align-items: center; gap: 6px; }
+        .q-type-tag { background: var(--saffron-lt); color: var(--saffron); border-radius: 4px;
+          padding: 1px 6px; font-size: .6rem; font-weight: 700; }
+        .q-text { font-size: .9rem; font-weight: 500; color: var(--text); line-height: 1.5; margin-bottom: 1rem; }
+        .options-row { display: flex; gap: 8px; flex-wrap: wrap; }
+        .opt-btn { flex: 1; min-width: 70px; padding: .5rem .4rem; border: 1.5px solid var(--border);
+          border-radius: var(--rs); background: var(--bg); cursor: pointer; text-align: center;
+          font-size: .72rem; font-weight: 500; color: var(--muted); transition: all .18s; font-family: inherit; line-height: 1.3; }
+        .opt-btn:hover { border-color: var(--saffron); color: var(--text); }
+        .opt-btn.sel { background: var(--saffron); border-color: var(--saffron); color: #fff; }
+        .opt-val { display: block; font-weight: 700; font-size: .85rem; }
+        .opt-desc { display: block; font-weight: 300; font-size: .63rem; opacity: .88; margin-top: 2px; }
+        
+        .submit-wrap { text-align: center; padding: 2rem 0 0; border-top: 1px solid var(--border); margin-top: 1.5rem; }
+        .submit-note { font-size: .76rem; color: var(--light); margin-top: .7rem; }
+        .btn-submit { background: var(--saffron); color: #fff; border: none; border-radius: 50px;
+          padding: .85rem 2.8rem; font-size: .95rem; font-weight: 600; cursor: pointer;
+          font-family: inherit; transition: all .2s; display: inline-flex; align-items: center; gap: 8px; }
+        .btn-submit:hover { background: var(--saffron-dk); transform: translateY(-1px); }
+        .btn-back { background: none; border: 1.5px solid var(--border); border-radius: 50px;
+          padding: .5rem 1.2rem; font-size: .8rem; font-weight: 500; cursor: pointer;
+          font-family: inherit; color: var(--muted); transition: all .2s; display: inline-flex; align-items: center; gap: 6px; }
+        .btn-back:hover { border-color: var(--saffron); color: var(--saffron); }
+        
+        /* RESULT */
+        .result-hero { background: linear-gradient(135deg, #E85D04 0%, #C44B02 40%, #D62828 100%);
+          padding: 2.5rem 2rem 4rem; text-align: center; color: #fff; }
+        .result-title { font-family: 'Playfair Display', serif; font-size: 1.4rem; margin-bottom: 2rem; opacity: .9; }
+        .scores-row { display: flex; justify-content: center; gap: 1.5rem; flex-wrap: wrap; }
+        .score-circle { background: rgba(255,255,255,.15); border: 2.5px solid rgba(255,255,255,.45);
+          border-radius: var(--r); padding: 1.5rem 1.2rem; min-width: 140px; text-align: center; }
+        .sc-label { font-size: .68rem; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+          color: rgba(255,255,255,.75); margin-bottom: .4rem; }
+        .sc-score { font-family: 'Playfair Display', serif; font-size: 2.6rem; font-weight: 700;
+          color: #fff; line-height: 1; }
+        .sc-raw { font-size: .65rem; color: rgba(255,255,255,.55); margin-top: 2px; }
+        .sc-sev { margin-top: .5rem; padding: .2rem .7rem; border-radius: 50px;
+          font-size: .65rem; font-weight: 700; letter-spacing: .5px; text-transform: uppercase;
+          display: inline-block; }
+        
+        .result-body { max-width: 800px; margin: -2rem auto 0; padding: 0 2rem 3rem; position: relative; z-index: 2; }
+        .result-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+          padding: 1.5rem; margin-bottom: 1.2rem; animation: fadeUp .5s ease both; }
+        .result-card:nth-child(2) { animation-delay: .1s; }
+        .result-card:nth-child(3) { animation-delay: .2s; }
+        .result-card:nth-child(4) { animation-delay: .3s; }
+        .rc-title { font-size: .65rem; font-weight: 700; letter-spacing: 2px; text-transform: uppercase;
+          color: var(--saffron); margin-bottom: .8rem; }
+        .interpretation-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+        .interp-item { border-radius: var(--rs); padding: 1rem; }
+        .interp-name { font-size: .72rem; font-weight: 700; margin-bottom: .3rem; }
+        .interp-sev { font-size: 1.05rem; font-weight: 700; margin-bottom: .25rem; }
+        .interp-score { font-size: .7rem; opacity: .7; }
+        .scoring-table { width: 100%; border-collapse: collapse; font-size: .78rem; }
+        .scoring-table th { text-align: left; padding: .5rem .8rem; background: var(--bg);
+          font-size: .68rem; font-weight: 700; letter-spacing: .5px; color: var(--muted);
+          text-transform: uppercase; }
+        .scoring-table td { padding: .52rem .8rem; border-top: 1px solid var(--border); color: var(--muted); }
+        .scoring-table tr.active-row td { font-weight: 700; color: var(--text); }
+        .sev-badge { display: inline-block; padding: 2px 8px; border-radius: 20px;
+          font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; }
+        .disclaimer { background: var(--gold-lt); border: 1px solid #F4C97A; border-radius: var(--r);
+          padding: 1rem 1.3rem; font-size: .78rem; color: #7A4F00; line-height: 1.65; }
+        .result-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 1.4rem; }
+        .btn-retake { border: 1.5px solid var(--saffron); background: transparent; color: var(--saffron);
+          border-radius: 50px; padding: .65rem 1.6rem; font-size: .85rem; font-weight: 600;
+          cursor: pointer; font-family: inherit; transition: all .2s; }
+        .btn-retake:hover { background: var(--saffron); color: #fff; }
+        .btn-home { background: var(--saffron); color: #fff; border: none; border-radius: 50px;
+          padding: .65rem 1.6rem; font-size: .85rem; font-weight: 600; cursor: pointer;
+          font-family: inherit; transition: opacity .2s; }
+        .btn-home:hover { opacity: .88; }
+        
+        /* ADMIN */
+        .admin-header { background: var(--navy); padding: 2rem 2rem 1.5rem; color: #fff; }
+        .admin-header h1 { font-family: 'Playfair Display', serif; font-size: 1.75rem; font-weight: 700; margin-bottom: .3rem; }
+        .admin-header p { font-size: .82rem; opacity: .7; }
+        .admin-body { max-width: 1100px; margin: 0 auto; padding: 2rem; }
+        .stats-row { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 14px; margin-bottom: 2rem; }
+        .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 1.1rem 1.3rem; }
+        .stat-num { font-family: 'Playfair Display', serif; font-size: 1.9rem; font-weight: 700; color: var(--saffron); }
+        .stat-lbl { font-size: .72rem; color: var(--muted); font-weight: 500; margin-top: 3px; }
+        .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 1.2rem; }
+        .admin-search { flex: 1; min-width: 180px; font-family: inherit; font-size: .83rem;
+          padding: .52rem .95rem; border: 1.5px solid var(--border); border-radius: var(--rs);
+          background: var(--bg); color: var(--text); outline: none; }
+        .admin-search:focus { border-color: var(--navy); }
+        .admin-select { font-family: inherit; font-size: .8rem; padding: .5rem .85rem;
+          border: 1.5px solid var(--border); border-radius: var(--rs); background: var(--bg);
+          color: var(--text); outline: none; cursor: pointer; }
+        .btn-export { background: #166534; color: #fff; border: none; border-radius: var(--rs);
+          padding: .52rem 1.1rem; font-size: .8rem; font-weight: 600; cursor: pointer;
+          font-family: inherit; display: flex; align-items: center; gap: 5px; transition: background .2s; }
+        .btn-export:hover { background: #14532D; }
+        .btn-clear { background: transparent; color: var(--crimson); border: 1.5px solid var(--crimson);
+          border-radius: var(--rs); padding: .5rem .95rem; font-size: .8rem; font-weight: 600;
+          cursor: pointer; font-family: inherit; transition: all .2s; }
+        .btn-clear:hover { background: var(--crimson); color: #fff; }
+        .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+          overflow: hidden; overflow-x: auto; }
+        .admin-table { width: 100%; border-collapse: collapse; font-size: .78rem; min-width: 900px; }
+        .admin-table th { background: var(--bg); text-align: left; padding: .65rem .9rem;
+          font-weight: 700; font-size: .65rem; color: var(--muted); letter-spacing: .5px;
+          border-bottom: 1px solid var(--border); white-space: nowrap; text-transform: uppercase; }
+        .admin-table td { padding: .7rem .9rem; border-bottom: 1px solid var(--border); color: var(--muted); vertical-align: middle; }
+        .admin-table tr:last-child td { border-bottom: none; }
+        .admin-table tr:hover td { background: var(--bg); }
+        .name-cell { font-weight: 600; color: var(--text) !important; }
+        .no-data-state { text-align: center; padding: 4rem 2rem; color: var(--light); }
+        .no-data-icon { font-size: 3rem; margin-bottom: 1rem; }
+        .pagination { display: flex; gap: 6px; align-items: center; justify-content: flex-end; margin-top: 1rem; }
+        .pg-btn { background: var(--surface); border: 1.5px solid var(--border); border-radius: var(--rs);
+          padding: .35rem .75rem; font-size: .75rem; font-weight: 500; cursor: pointer;
+          font-family: inherit; color: var(--muted); transition: all .18s; }
+        .pg-btn:hover, .pg-btn.active { background: var(--navy); color: #fff; border-color: var(--navy); }
+        .pg-info { font-size: .72rem; color: var(--light); }
+        
+        /* PIN OVERLAY */
+        .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 500;
+          display: flex; align-items: center; justify-content: center; animation: fadeIn .2s ease; }
+        .pin-box { background: var(--surface); border-radius: var(--r); padding: 2.2rem; width: 340px; text-align: center;
+          box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+        .pin-box h3 { font-family: 'Playfair Display', serif; font-size: 1.2rem; margin-bottom: .4rem; }
+        .pin-box p { font-size: .82rem; color: var(--muted); margin-bottom: 1.4rem; line-height: 1.5; }
+        .pin-input { font-family: inherit; font-size: 1.4rem; letter-spacing: 10px; text-align: center;
+          padding: .7rem; border: 2px solid var(--border); border-radius: var(--rs); width: 100%;
+          outline: none; margin-bottom: .8rem; }
+        .pin-input:focus { border-color: var(--navy); }
+        .pin-error { font-size: .75rem; color: var(--crimson); margin-bottom: .6rem; }
+        .pin-btn { background: var(--navy); color: #fff; border: none; border-radius: 50px;
+          padding: .7rem 2rem; font-size: .88rem; font-weight: 600; cursor: pointer;
+          font-family: inherit; width: 100%; margin-bottom: .5rem; transition: background .2s; }
+        .pin-btn:hover { background: #152d4a; }
+        .pin-cancel { background: none; border: none; font-size: .78rem; color: var(--light);
+          cursor: pointer; font-family: inherit; }
+        
+        /* TOAST */
+        .toast { position: fixed; bottom: 24px; right: 24px; background: #1E3A5F; color: #fff;
+          border-radius: var(--rs); padding: .7rem 1.1rem; font-size: .82rem; font-weight: 500;
+          z-index: 999; transform: translateY(80px); opacity: 0; transition: all .3s ease;
+          box-shadow: 0 4px 20px rgba(0,0,0,.2); max-width: 280px; line-height: 1.4; }
+        .toast.show { transform: translateY(0); opacity: 1; }
+        
+        /* FOOTER */
+        footer { background: var(--surface); border-top: 1px solid var(--border);
+          padding: 2rem; text-align: center; margin-top: 2rem; }
+        .footer-logo { font-family: 'Playfair Display', serif; font-size: 1.3rem; font-weight: 700;
+          color: var(--text); margin-bottom: .4rem; }
+        .footer-logo em { color: var(--saffron); font-style: normal; }
+        footer p { font-size: .75rem; color: var(--light); line-height: 1.7; max-width: 560px; margin: 0 auto; }
+        
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        
+        @media (max-width: 640px) {
+          .nav { padding: 0 1rem; }
+          .hero { padding: 3rem 1rem 2.5rem; }
+          .container { padding: 0 1rem; }
+          .pform-wrap { padding: 1.5rem 1rem; }
+          .form-row { grid-template-columns: 1fr; }
+          .quiz-body { padding: 1.5rem 1rem; }
+          .subscale-grid { grid-template-columns: 1fr; }
+          .scores-row { flex-direction: column; align-items: center; }
+          .score-circle { width: 100%; max-width: 280px; }
+          .interpretation-grid { grid-template-columns: 1fr; }
+          .result-body { padding: 0 1rem 2rem; }
+          .admin-body { padding: 1.5rem 1rem; }
+          .toolbar { flex-direction: column; align-items: stretch; }
+        }
+      `}</style>
+    );
+
+    /* ─── TOAST ──────────────────────────────────────────────────────── */
+    let toastTimer = null;
+    function Toast({ msg }) {
+      return <div className={`toast ${msg ? "show" : ""}`}>{msg}</div>;
+    }
+
+    /* ─── APP ────────────────────────────────────────────────────────── */
+    function App() {
+      const [view, setView] = useState("home"); // home | form | quiz | result | admin
+      const [patient, setPatient] = useState({ name: "", age: "", gender: "", contact: "", city: "", occupation: "", referral: "", reason: "" });
+      const [consent, setConsent] = useState(false);
+      const [answers, setAnswers] = useState({});
+      const [result, setResult] = useState(null);
+      const [entries, setEntries] = useState([]);
+      const [showPin, setShowPin] = useState(false);
+      const [pin, setPin] = useState("");
+      const [pinErr, setPinErr] = useState(false);
+      const [toast, setToast] = useState("");
+      const [search, setSearch] = useState("");
+      const [filterSev, setFilterSev] = useState("");
+      const [page, setPage] = useState(1);
+      const PER_PAGE = 12;
+
+      // Load initial entries for admin if needed
+      useEffect(() => {
+        if (view === "admin") {
+          loadEntries().then(setEntries);
+        }
+      }, [view]);
+
+      const showToast = (msg) => {
+        setToast(msg);
+        if (toastTimer) clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => setToast(""), 3000);
+      };
+
+      const answered = Object.keys(answers).length;
+      const total = QUESTIONS.length;
+      const pct = Math.round((answered / total) * 100);
+
+      function handleAnswer(qId, val) {
+        setAnswers((prev) => ({ ...prev, [qId]: val }));
+      }
+
+      async function handleSubmit() {
+        if (answered < total) { showToast(`Please answer all ${total} questions.`); return; }
+        
+        showToast("Saving results...");
+        const scores = calcScores(answers);
+        const newResult = { ...scores, patient: { ...patient }, date: new Date().toISOString() };
+        
+        // Save to Firebase
+        await saveEntry(newResult);
+        
+        setResult(newResult);
+        setView("result");
+        window.scrollTo(0, 0);
+      }
+
+      function goHome() {
+        setView("home");
+        setAnswers({});
+        setResult(null);
+        setPatient({ name: "", age: "", gender: "", contact: "", city: "", occupation: "", referral: "", reason: "" });
+        setConsent(false);
+        window.scrollTo(0, 0);
+      }
+
+      function startForm() {
+        setView("form");
+        window.scrollTo(0, 0);
+      }
+
+      function beginQuiz() {
+        if (!patient.name.trim() || !patient.age || !patient.gender) { showToast("Please fill in name, age, and gender."); return; }
+        if (!consent) { showToast("Please accept the consent notice."); return; }
+        setAnswers({});
+        setView("quiz");
+        window.scrollTo(0, 0);
+      }
+
+      function openAdmin() { setShowPin(true); setPin(""); setPinErr(false); }
+      
+      function verifyPin() {
+        if (pin === ADMIN_PIN) { 
+          setShowPin(false); 
+          setView("admin"); 
+          window.scrollTo(0, 0); 
+        } else { 
+          setPinErr(true); 
+          setPin(""); 
+        }
+      }
+      
+      async function handleClearAllData() {
+        if (!window.confirm("Delete ALL patient records from the cloud? This cannot be undone.")) return;
+        showToast("Clearing database...");
+        await clearCloudData();
+        setEntries([]);
+        showToast("All records cleared.");
+      }
+
+      function exportExcel() {
+        if (!entries.length) { showToast("No data to export."); return; }
+        const rows = entries.map((e, i) => ({
+          "#": i + 1,
+          "Date": new Date(e.date).toLocaleString("en-IN"),
+          "Name": e.patient?.name || "",
+          "Age": e.patient?.age || "",
+          "Gender": e.patient?.gender || "",
+          "City": e.patient?.city || "",
+          "Occupation": e.patient?.occupation || "",
+          "Referred By": e.patient?.referral || "",
+          "Depression Raw": e.d,
+          "Depression Final (×2)": e.dFinal,
+          "Depression Severity": getSeverity("d", e.d).label,
+          "Anxiety Raw": e.a,
+          "Anxiety Final (×2)": e.aFinal,
+          "Anxiety Severity": getSeverity("a", e.a).label,
+          "Stress Raw": e.s,
+          "Stress Final (×2)": e.sFinal,
+          "Stress Severity": getSeverity("s", e.s).label,
+        }));
+        const ws = window.XLSX.utils.json_to_sheet(rows);
+        const wb = window.XLSX.utils.book_new();
+        window.XLSX.utils.book_append_sheet(wb, ws, "DASS-21 Results");
+        window.XLSX.writeFile(wb, `DASS21_Records_${new Date().toISOString().slice(0, 10)}.xlsx`);
+        showToast("Excel file downloaded!");
+      }
+
+      // Filtered entries
+      const filtered = entries.filter((e) => {
+        const q = search.toLowerCase();
+        const nameMatch = (e.patient?.name || "").toLowerCase().includes(q);
+        const cityMatch = (e.patient?.city || "").toLowerCase().includes(q);
+        if (q && !nameMatch && !cityMatch) return false;
+        if (filterSev) {
+          const dSev = getSeverity("d", e.d).label;
+          const aSev = getSeverity("a", e.a).label;
+          const sSev = getSeverity("s", e.s).label;
+          if (![dSev, aSev, sSev].includes(filterSev)) return false;
+        }
+        return true;
+      });
+      const totalPages = Math.ceil(filtered.length / PER_PAGE);
+      const pageEntries = filtered.slice((page - 1) * PER_PAGE, page * PER_PAGE);
+
+      // Stats for admin
+      const totalSubmissions = entries.length;
+      const depAvg = entries.length ? Math.round(entries.reduce((s, e) => s + e.dFinal, 0) / entries.length) : 0;
+      const anxAvg = entries.length ? Math.round(entries.reduce((s, e) => s + e.aFinal, 0) / entries.length) : 0;
+      const strAvg = entries.length ? Math.round(entries.reduce((s, e) => s + e.sFinal, 0) / entries.length) : 0;
+      const severeCount = entries.filter((e) =>
+        ["Severe", "Extremely Severe"].includes(getSeverity("d", e.d).label) ||
+        ["Severe", "Extremely Severe"].includes(getSeverity("a", e.a).label) ||
+        ["Severe", "Extremely Severe"].includes(getSeverity("s", e.s).label)
+      ).length;
+
+      const TYPE_NAMES = { d: "Depression", a: "Anxiety", s: "Stress" };
+
+      return (
+        <>
+          <G />
+          {/* NAV */}
+          <nav className="nav">
+            <div className="nav-logo" onClick={goHome}>
+              <div className="nav-logo-icon">🧠</div>
+              <span className="nav-logo-text">DASS<em>-21</em></span>
+            </div>
+            <div className="nav-right">
+              {view !== "home" && view !== "admin" && (
+                <button className="btn-back" onClick={goHome} style={{ borderRadius: 50 }}>← Home</button>
+              )}
+              {view === "admin" && (
+                <button className="btn-back" onClick={goHome} style={{ borderRadius: 50 }}>← Home</button>
+              )}
+              <button className="btn-nav btn-nav-primary" onClick={startForm}>Take Test</button>
+              <button className="btn-nav btn-nav-dark" onClick={openAdmin}>📊 Admin</button>
+            </div>
+          </nav>
+
+          {/* PIN OVERLAY */}
+          {showPin && (
+            <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowPin(false); } }}>
+              <div className="pin-box">
+                <div style={{ fontSize: "2rem", marginBottom: ".5rem" }}>🔐</div>
+                <h3>Admin Access</h3>
+                <p>Enter the 4-digit PIN to view patient records and reports.<br /><span style={{ fontSize: ".72rem", color: "#9E8E7B" }}>(Default PIN: 1234)</span></p>
+                <input className="pin-input" type="password" maxLength={4} placeholder="••••" value={pin}
+                  onChange={(e) => { setPin(e.target.value); setPinErr(false); }}
+                  onKeyDown={(e) => { if (e.key === "Enter") verifyPin(); }} autoFocus />
+                {pinErr && <div className="pin-error">Incorrect PIN. Try again.</div>}
+                <button className="pin-btn" onClick={verifyPin}>Access Dashboard</button>
+                <button className="pin-cancel" onClick={() => setShowPin(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+
+          <Toast msg={toast} />
+
+          {/* ── HOME VIEW ── */}
+          {view === "home" && (
+            <>
+              <section className="hero">
+                <div className="hero-dots" />
+                <div className="hero-badge">✦ Free & Confidential Mental Health Screening</div>
+                <h1>DASS-21 Screening Tool</h1>
+                <p>The Depression, Anxiety and Stress Scale — 21 Items is a validated clinical instrument measuring three distinct emotional states. Take it now to better understand how you've been feeling.</p>
+                <div className="hero-pills">
+                  <span className="hero-pill">🕐 ~5 minutes</span>
+                  <span className="hero-pill">✔ Clinically Validated</span>
+                  <span className="hero-pill">🔒 Private & Confidential</span>
+                  <span className="hero-pill">📊 Instant Results</span>
+                </div>
+              </section>
+
+              <div className="container">
+                <div className="notice">
+                  <span>⚠️</span>
+                  <span><strong>Important:</strong> This tool is for informational purposes only and does not constitute a medical diagnosis. Results should be discussed with a qualified mental health professional. If you are in immediate distress, please contact iCall: <strong>9152987821</strong> or Vandrevala Foundation: <strong>1860-2662-345</strong>.</span>
+                </div>
+
+                <div className="intro-card">
+                  <h2>About the DASS-21</h2>
+                  <p>The DASS-21 is a set of three self-report scales measuring the negative emotional states of Depression, Anxiety, and Stress. It contains 21 questions — 7 per subscale. Each answer is rated from 0 to 3 based on how much the statement applied to you over the past week.</p>
+                  <p><strong>Scoring:</strong> Raw subscale scores are multiplied by 2 to obtain the final score, which is then compared against validated severity thresholds.</p>
+                  <div className="subscale-grid">
+                    <div className="subscale-chip" style={{ background: "#EFF6FF" }}>
+                      <div className="sc-icon">😔</div>
+                      <div className="sc-name">Depression</div>
+                      <div className="sc-items">7 items · Dysphoria, hopelessness, anhedonia</div>
+                    </div>
+                    <div className="subscale-chip" style={{ background: "#FFF7ED" }}>
+                      <div className="sc-icon">😰</div>
+                      <div className="sc-name">Anxiety</div>
+                      <div className="sc-items">7 items · Autonomic arousal, situational anxiety</div>
+                    </div>
+                    <div className="subscale-chip" style={{ background: "#F0FDF4" }}>
+                      <div className="sc-icon">😤</div>
+                      <div className="sc-name">Stress</div>
+                      <div className="sc-items">7 items · Chronic arousal, agitation, irritability</div>
+                    </div>
+                  </div>
+                  <button className="btn-begin" onClick={startForm}>Begin Screening →</button>
+                </div>
+
+                {/* Severity Reference Table */}
+                <div className="result-card" style={{ background: "#fff", border: "1px solid var(--border)", borderRadius: "var(--r)", padding: "1.5rem", margin: "0 0 3rem" }}>
+                  <div className="rc-title">Severity Reference Guide</div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table className="scoring-table" style={{ minWidth: 520 }}>
+                      <thead>
+                        <tr>
+                          <th>Category</th>
+                          <th>Depression (Final)</th>
+                          <th>Anxiety (Final)</th>
+                          <th>Stress (Final)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {["Normal", "Mild", "Moderate", "Severe", "Extremely Severe"].map((cat, i) => {
+                          const d = [["0–9"], ["10–13"], ["14–20"], ["21–27"], ["28+"]];
+                          const a = [["0–7"], ["8–9"], ["10–14"], ["15–19"], ["20+"]];
+                          const s = [["0–14"], ["15–18"], ["19–25"], ["26–33"], ["34+"]];
+                          const colors = ["#166534", "#854D0E", "#9A3412", "#991B1B", "#7F1D1D"];
+                          const bgs = ["#DCFCE7", "#FEF9C3", "#FFEDD5", "#FEE2E2", "#FCA5A5"];
+                          return (
+                            <tr key={cat}>
+                              <td><span className="sev-badge" style={{ background: bgs[i], color: colors[i] }}>{cat}</span></td>
+                              <td style={{ fontWeight: 600, color: "#1A1108" }}>{d[i]}</td>
+                              <td style={{ fontWeight: 600, color: "#1A1108" }}>{a[i]}</td>
+                              <td style={{ fontWeight: 600, color: "#1A1108" }}>{s[i]}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <p style={{ fontSize: ".72rem", color: "var(--light)", marginTop: ".7rem" }}>
+                    * Raw subscale scores × 2 = Final score. Lovibond & Lovibond (1995)
+                  </p>
+                </div>
+              </div>
+
+              <footer>
+                <div className="footer-logo">DASS<em>-21</em></div>
+                <p>A free, confidential mental health screening platform. All tools are based on validated clinical instruments. Screening results do not constitute a diagnosis. Always consult a licensed mental health professional.</p>
+              </footer>
+            </>
+          )}
+
+          {/* ── PATIENT FORM VIEW ── */}
+          {view === "form" && (
+            <>
+              <div className="quiz-header">
+                <div style={{ maxWidth: 680, margin: "0 auto" }}>
+                  <button className="btn-back" onClick={goHome} style={{ marginBottom: "1rem" }}>← Back to Home</button>
+                  <div className="quiz-badge">DASS-21</div>
+                  <h1 className="quiz-h1">Patient Information</h1>
+                  <p className="quiz-sub">Please fill in your details before taking the test. This helps keep accurate records.</p>
+                </div>
+              </div>
+              <div className="pform-wrap">
+                <div className="pform-section">
+                  <h3>👤 Basic Information</h3>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Full Name *</label>
+                      <input type="text" placeholder="e.g. Priya Sharma" value={patient.name} onChange={(e) => setPatient((p) => ({ ...p, name: e.target.value }))} />
+                    </div>
+                    <div className="form-group">
+                      <label>Age *</label>
+                      <input type="number" placeholder="e.g. 24" min="12" max="100" value={patient.age} onChange={(e) => setPatient((p) => ({ ...p, age: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Gender *</label>
+                      <select value={patient.gender} onChange={(e) => setPatient((p) => ({ ...p, gender: e.target.value }))}>
+                        <option value="">Select gender</option>
+                        <option>Male</option><option>Female</option>
+                        <option>Non-binary / Gender-fluid</option><option>Prefer not to say</option>
+                      </select>
+                    </div>
+                    <div className="form-group">
+                      <label>Phone / Email (optional)</label>
+                      <input type="text" placeholder="Optional" value={patient.contact} onChange={(e) => setPatient((p) => ({ ...p, contact: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>City</label>
+                      <input type="text" placeholder="e.g. Prayagraj" value={patient.city} onChange={(e) => setPatient((p) => ({ ...p, city: e.target.value }))} />
+                    </div>
+                    <div className="form-group">
+                      <label>Occupation</label>
+                      <select value={patient.occupation} onChange={(e) => setPatient((p) => ({ ...p, occupation: e.target.value }))}>
+                        <option value="">Select occupation</option>
+                        <option>Student</option><option>Working Professional</option>
+                        <option>Homemaker</option><option>Self-employed</option>
+                        <option>Unemployed</option><option>Retired</option><option>Other</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="form-row full">
+                    <div className="form-group">
+                      <label>Referred By (optional)</label>
+                      <input type="text" placeholder="Doctor name, hospital, or self-referred" value={patient.referral} onChange={(e) => setPatient((p) => ({ ...p, referral: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="form-row full">
+                    <div className="form-group">
+                      <label>Reason for taking this test (optional)</label>
+                      <textarea placeholder="e.g. Feeling stressed lately, doctor advised…" value={patient.reason} onChange={(e) => setPatient((p) => ({ ...p, reason: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="consent-box">
+                  <strong>Consent & Privacy Notice</strong><br />
+                  Your responses will be securely stored in our cloud database for clinical record-keeping. These results do not constitute a medical diagnosis and must be interpreted by a qualified mental health professional.
+                  <label className="consent-label">
+                    <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+                    I understand this is a screening tool, not a diagnosis. I consent to my responses being saved.
+                  </label>
+                </div>
+
+                <button className="btn-start" onClick={beginQuiz} disabled={!consent || !patient.name.trim() || !patient.age || !patient.gender}>
+                  Begin DASS-21 Test →
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── QUIZ VIEW ── */}
+          {view === "quiz" && (
+            <>
+              <div className="quiz-header">
+                <div style={{ maxWidth: 860, margin: "0 auto" }}>
+                  <button className="btn-back" onClick={goHome} style={{ marginBottom: "1rem" }}>← Back to Home</button>
+                  <div className="quiz-badge">DASS-21</div>
+                  <h1 className="quiz-h1">Depression, Anxiety and Stress Scale</h1>
+                  <p className="quiz-sub">Rate each statement based on how much it applied to you over the <strong>past week</strong>.</p>
+                </div>
+              </div>
+
+              <div className="progress-bar-wrap">
+                <div className="progress-inner">
+                  <div className="progress-label">{answered} of {total} questions answered · {pct}% complete</div>
+                  <div className="progress-track"><div className="progress-fill" style={{ width: `${pct}%` }} /></div>
+                </div>
+              </div>
+
+              <div className="quiz-body">
+                <div className="quiz-scale-legend">
+                  <strong>Rating Scale:</strong>
+                  <div className="scale-pills">
+                    {OPTION_LABELS.map((o) => (
+                      <span key={o.value} className="scale-pill">{o.value} — {o.label}</span>
+                    ))}
+                  </div>
+                </div>
+
+                {QUESTIONS.map((q) => {
+                  const sel = answers[q.id];
+                  return (
+                    <div key={q.id} className={`q-block ${sel !== undefined ? "answered" : ""}`}>
+                      <div className="q-num">
+                        Question {q.id} of {total}
+                        <span className="q-type-tag">{TYPE_NAMES[q.type]}</span>
+                      </div>
+                      <div className="q-text">{q.text}</div>
+                      <div className="options-row">
+                        {OPTION_LABELS.map((o) => (
+                          <button key={o.value} className={`opt-btn ${sel === o.value ? "sel" : ""}`}
+                            onClick={() => handleAnswer(q.id, o.value)}>
+                            <span className="opt-val">{o.short}</span>
+                            <span className="opt-desc">{o.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+
+                <div className="submit-wrap">
+                  <button className="btn-submit" onClick={handleSubmit}>
+                    Submit & View Results →
+                  </button>
+                  {answered < total && (
+                    <div className="submit-note">⚠ {total - answered} question{total - answered > 1 ? "s" : ""} unanswered. Please complete all questions before submitting.</div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ── RESULT VIEW ── */}
+          {view === "result" && result && (() => {
+            const dSev = getSeverity("d", result.d);
+            const aSev = getSeverity("a", result.a);
+            const sSev = getSeverity("s", result.s);
+
+            const overallSev = [dSev, aSev, sSev].reduce((worst, cur) => {
+              const order = ["Normal", "Mild", "Moderate", "Severe", "Extremely Severe"];
+              return order.indexOf(cur.label) > order.indexOf(worst.label) ? cur : worst;
+            });
+
+            const actions = {
+              Normal: "Your scores are within the normal range. Continue practising self-care, maintaining social connections, and managing stress through healthy habits. Consider a follow-up screening in a few months.",
+              Mild: "Your scores indicate mild symptoms. It may help to explore relaxation techniques, mindfulness, regular physical activity, and speaking with a trusted person about how you're feeling.",
+              Moderate: "Your scores suggest moderate levels of distress. We strongly recommend speaking with a qualified mental health professional who can provide personalised guidance and support.",
+              Severe: "Your scores indicate a significant level of distress. Please seek professional help soon. A qualified psychologist or psychiatrist can provide proper assessment and treatment.",
+              "Extremely Severe": "Your scores are in the extremely severe range. Please seek professional support urgently. If you are in crisis, contact iCall (9152987821) or Vandrevala Foundation (1860-2662-345) immediately.",
+            };
+
+            return (
+              <>
+                <div className="result-hero">
+                  <div className="result-title">Your DASS-21 Results — {result.patient?.name}</div>
+                  <div className="scores-row">
+                    {[
+                      { key: "d", label: "Depression", score: result.dFinal, raw: result.d, sev: dSev },
+                      { key: "a", label: "Anxiety", score: result.aFinal, raw: result.a, sev: aSev },
+                      { key: "s", label: "Stress", score: result.sFinal, raw: result.s, sev: sSev },
+                    ].map((item) => (
+                      <div className="score-circle" key={item.key}>
+                        <div className="sc-label">{item.label}</div>
+                        <div className="sc-score">{item.score}</div>
+                        <div className="sc-raw">Raw: {item.raw} × 2</div>
+                        <span className="sc-sev" style={{ background: item.sev.bg, color: item.sev.color }}>{item.sev.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="result-body">
+                  <div className="result-card">
+                    <div className="rc-title">Recommended Action</div>
+                    <p style={{ fontSize: ".9rem", color: "var(--text)", lineHeight: 1.7 }}>{actions[overallSev.label]}</p>
+                  </div>
+
+                  <div className="result-card">
+                    <div className="rc-title">Score Interpretation</div>
+                    <div className="interpretation-grid">
+                      {[
+                        { key: "d", label: "😔 Depression", score: result.dFinal, sev: dSev },
+                        { key: "a", label: "😰 Anxiety", score: result.aFinal, sev: aSev },
+                        { key: "s", label: "😤 Stress", score: result.sFinal, sev: sSev },
+                      ].map((item) => (
+                        <div key={item.key} className="interp-item" style={{ background: item.sev.bg }}>
+                          <div className="interp-name" style={{ color: item.sev.color }}>{item.label}</div>
+                          <div className="interp-sev" style={{ color: item.sev.color }}>{item.sev.label}</div>
+                          <div className="interp-score" style={{ color: item.sev.color }}>Score: {item.score}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {["d", "a", "s"].map((type) => (
+                    <div className="result-card" key={type}>
+                      <div className="rc-title">{TYPE_NAMES[type]} — Severity Guide</div>
+                      <table className="scoring-table">
+                        <thead><tr><th>Score Range</th><th>Severity</th><th>Recommended Action</th></tr></thead>
+                        <tbody>
+                          {SCORING_TABLES[type].map(([range, sev, action]) => {
+                            const curSev = getSeverity(type, result[type]).label;
+                            return (
+                              <tr key={range} className={curSev === sev ? "active-row" : ""}>
+                                <td style={{ fontWeight: curSev === sev ? 700 : 400 }}>{range}</td>
+                                <td>
+                                  <span className="sev-badge" style={{
+                                    background: SEVERITY_THRESHOLDS[type].find((t) => t.label === sev)?.bg,
+                                    color: SEVERITY_THRESHOLDS[type].find((t) => t.label === sev)?.color,
+                                  }}>{sev}</span>
+                                </td>
+                                <td>{action}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+
+                  <div className="disclaimer">
+                    ⚠️ <strong>Reminder:</strong> This screening result is not a medical diagnosis. Please share these results with a qualified mental health professional who can provide personalised guidance. For immediate crisis support: iCall <strong>9152987821</strong> · Vandrevala Foundation <strong>1860-2662-345</strong>.
+                  </div>
+                  <div className="result-actions">
+                    <button className="btn-retake" onClick={() => { setAnswers({}); setView("quiz"); window.scrollTo(0, 0); }}>Retake Test</button>
+                    <button className="btn-home" onClick={goHome}>Back to Home</button>
+                  </div>
+
+                  <p style={{ fontSize: ".7rem", color: "var(--light)", textAlign: "center", marginTop: "1rem" }}>
+                    Lovibond, S.H. & Lovibond, P.F. (1995). Manual for the Depression Anxiety & Stress Scales. (2nd Ed.) Sydney: Psychology Foundation.
+                  </p>
+                </div>
+              </>
+            );
+          })()}
+
+          {/* ── ADMIN VIEW ── */}
+          {view === "admin" && (
+            <>
+              <div className="admin-header">
+                <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: "1rem" }}>
+                  <div>
+                    <button className="btn-back" onClick={goHome} style={{ marginBottom: ".7rem" }}>← Home</button>
+                    <h1>Patient Records Dashboard</h1>
+                    <p>DASS-21 submissions · Real-time updates · Export ready</p>
+                  </div>
+                  <button className="btn-export" onClick={exportExcel} style={{ padding: ".65rem 1.4rem", fontSize: ".85rem" }}>
+                    📥 Export to Excel
+                  </button>
+                </div>
+              </div>
+
+              <div className="admin-body">
+                <div className="stats-row">
+                  <div className="stat-card"><div className="stat-num">{totalSubmissions}</div><div className="stat-lbl">Total Submissions</div></div>
+                  <div className="stat-card"><div className="stat-num">{depAvg}</div><div className="stat-lbl">Avg Depression Score</div></div>
+                  <div className="stat-card"><div className="stat-num">{anxAvg}</div><div className="stat-lbl">Avg Anxiety Score</div></div>
+                  <div className="stat-card"><div className="stat-num">{strAvg}</div><div className="stat-lbl">Avg Stress Score</div></div>
+                  <div className="stat-card"><div className="stat-num" style={{ color: "var(--crimson)" }}>{severeCount}</div><div className="stat-lbl">Severe / Ext. Severe Cases</div></div>
+                </div>
+
+                <div className="toolbar">
+                  <input className="admin-search" type="search" placeholder="🔍 Search by name or city…"
+                    value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} />
+                  <select className="admin-select" value={filterSev} onChange={(e) => { setFilterSev(e.target.value); setPage(1); }}>
+                    <option value="">All Severities</option>
+                    {["Normal", "Mild", "Moderate", "Severe", "Extremely Severe"].map((s) => (
+                      <option key={s}>{s}</option>
+                    ))}
+                  </select>
+                  <button className="btn-clear" onClick={handleClearAllData}>🗑 Clear All Data</button>
+                </div>
+
+                <div className="table-wrap">
+                  {pageEntries.length === 0 ? (
+                    <div className="no-data-state">
+                      <div className="no-data-icon">📋</div>
+                      <p style={{ fontSize: ".9rem", color: "var(--muted)" }}>{entries.length === 0 ? "No patient records yet." : "No records match your filters."}</p>
+                      <p style={{ fontSize: ".78rem", color: "var(--light)" }}>Records appear here as patients complete the screening.</p>
+                    </div>
+                  ) : (
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Date & Time</th>
+                          <th>Patient Name</th>
+                          <th>Age</th>
+                          <th>Gender</th>
+                          <th>City</th>
+                          <th>Occupation</th>
+                          <th>Depression</th>
+                          <th>Anxiety</th>
+                          <th>Stress</th>
+                          <th>Referred By</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pageEntries.map((e, i) => {
+                          const dSev = getSeverity("d", e.d);
+                          const aSev = getSeverity("a", e.a);
+                          const sSev = getSeverity("s", e.s);
+                          return (
+                            <tr key={e.id}>
+                              <td>{(page - 1) * PER_PAGE + i + 1}</td>
+                              <td>{new Date(e.date).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+                              <td className="name-cell">{e.patient?.name || "—"}</td>
+                              <td>{e.patient?.age || "—"}</td>
+                              <td>{e.patient?.gender || "—"}</td>
+                              <td>{e.patient?.city || "—"}</td>
+                              <td>{e.patient?.occupation || "—"}</td>
+                              <td>
+                                <span>{e.dFinal}</span>&nbsp;
+                                <span className="sev-badge" style={{ background: dSev.bg, color: dSev.color }}>{dSev.label}</span>
+                              </td>
+                              <td>
+                                <span>{e.aFinal}</span>&nbsp;
+                                <span className="sev-badge" style={{ background: aSev.bg, color: aSev.color }}>{aSev.label}</span>
+                              </td>
+                              <td>
+                                <span>{e.sFinal}</span>&nbsp;
+                                <span className="sev-badge" style={{ background: sSev.bg, color: sSev.color }}>{sSev.label}</span>
+                              </td>
+                              <td>{e.patient?.referral || "—"}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+                {totalPages > 1 && (
+                  <div className="pagination">
+                    <span className="pg-info">{filtered.length} records · Page {page} of {totalPages}</span>
+                    <button className="pg-btn" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>‹ Prev</button>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                      <button key={p} className={`pg-btn ${page === p ? "active" : ""}`} onClick={() => setPage(p)}>{p}</button>
+                    ))}
+                    <button className="pg-btn" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}>Next ›</button>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
