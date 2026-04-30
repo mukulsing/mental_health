@@ -14,10 +14,6 @@
   
   <!-- Load SheetJS (XLSX) for Excel Export -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-
-  <!-- Load Firebase -->
-  <script src="https://www.gstatic.com/firebasejs/10.11.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.11.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
   <div id="root"></div>
@@ -124,53 +120,21 @@
       return { d, a, s, dFinal: d * 2, aFinal: a * 2, sFinal: s * 2 };
     }
 
-    /* ─── FIREBASE CLOUD DATABASE SETUP ─────────────────────────────── */
-    // TODO: PASTE YOUR FIREBASE CONFIGURATION HERE:
-    const firebaseConfig = {
-      apiKey: "AIzaSyAKGknrIuzGjNoSPDsRDs_BTgrSXl6ez7o",
-  authDomain: "mental-health-dass-21.firebaseapp.com",
-  projectId: "mental-health-dass-21",
-  storageBucket: "mental-health-dass-21.firebasestorage.app",
-  messagingSenderId: "15455866070",
-  appId: "1:15455866070:web:c6c56268267de0c5af8d77",
-  measurementId: "G-BRQ0VX097L"
-    };
-
-    // Initialize Firebase
-    if (!firebase.apps.length) {
-      firebase.initializeApp(firebaseConfig);
-    }
-    const db = firebase.firestore();
+    /* ─── STORAGE HELPERS (Updated for standard browser localStorage) ─ */
+    const STORAGE_KEY = "dass21_entries";
 
     async function loadEntries() {
       try {
-        const snapshot = await db.collection("dass21_entries").orderBy("date", "desc").get();
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      } catch (e) {
-        console.error("Error loading entries from cloud:", e);
-        return [];
-      }
+        const result = localStorage.getItem(STORAGE_KEY);
+        if (result) return JSON.parse(result);
+      } catch (_) {}
+      return [];
     }
 
-    async function saveEntry(entry) {
+    async function saveEntries(entries) {
       try {
-        await db.collection("dass21_entries").add(entry);
-      } catch (e) {
-        console.error("Error saving entry to cloud:", e);
-      }
-    }
-    
-    async function clearCloudData() {
-      try {
-        const snapshot = await db.collection("dass21_entries").get();
-        const batch = db.batch();
-        snapshot.docs.forEach((doc) => {
-          batch.delete(doc.ref);
-        });
-        await batch.commit();
-      } catch (e) {
-        console.error("Error clearing cloud data:", e);
-      }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+      } catch (_) {}
     }
 
     /* ─── STYLES ────────────────────────────────────────────────────── */
@@ -495,12 +459,10 @@
       const [page, setPage] = useState(1);
       const PER_PAGE = 12;
 
-      // Load initial entries for admin if needed
+      // Load entries from storage on mount
       useEffect(() => {
-        if (view === "admin") {
-          loadEntries().then(setEntries);
-        }
-      }, [view]);
+        loadEntries().then(setEntries);
+      }, []);
 
       const showToast = (msg) => {
         setToast(msg);
@@ -516,17 +478,15 @@
         setAnswers((prev) => ({ ...prev, [qId]: val }));
       }
 
-      async function handleSubmit() {
+      function handleSubmit() {
         if (answered < total) { showToast(`Please answer all ${total} questions.`); return; }
-        
-        showToast("Saving results...");
         const scores = calcScores(answers);
         const newResult = { ...scores, patient: { ...patient }, date: new Date().toISOString() };
-        
-        // Save to Firebase
-        await saveEntry(newResult);
-        
         setResult(newResult);
+        const entry = { id: Date.now(), ...newResult };
+        const updated = [entry, ...entries];
+        setEntries(updated);
+        saveEntries(updated);
         setView("result");
         window.scrollTo(0, 0);
       }
@@ -554,23 +514,15 @@
       }
 
       function openAdmin() { setShowPin(true); setPin(""); setPinErr(false); }
-      
       function verifyPin() {
-        if (pin === ADMIN_PIN) { 
-          setShowPin(false); 
-          setView("admin"); 
-          window.scrollTo(0, 0); 
-        } else { 
-          setPinErr(true); 
-          setPin(""); 
-        }
+        if (pin === ADMIN_PIN) { setShowPin(false); setView("admin"); loadEntries().then(setEntries); window.scrollTo(0, 0); }
+        else { setPinErr(true); setPin(""); }
       }
-      
-      async function handleClearAllData() {
-        if (!window.confirm("Delete ALL patient records from the cloud? This cannot be undone.")) return;
-        showToast("Clearing database...");
-        await clearCloudData();
-        setEntries([]);
+      function clearAllData() {
+        if (!window.confirm("Delete ALL patient records? This cannot be undone.")) return;
+        const updated = [];
+        setEntries(updated);
+        saveEntries(updated);
         showToast("All records cleared.");
       }
 
@@ -832,7 +784,7 @@
 
                 <div className="consent-box">
                   <strong>Consent & Privacy Notice</strong><br />
-                  Your responses will be securely stored in our cloud database for clinical record-keeping. These results do not constitute a medical diagnosis and must be interpreted by a qualified mental health professional.
+                  Your responses will be stored in this browser session for record-keeping. No data is transmitted to external servers. These results do not constitute a medical diagnosis and must be interpreted by a qualified mental health professional.
                   <label className="consent-label">
                     <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
                     I understand this is a screening tool, not a diagnosis. I consent to my responses being saved.
@@ -1047,7 +999,7 @@
                       <option key={s}>{s}</option>
                     ))}
                   </select>
-                  <button className="btn-clear" onClick={handleClearAllData}>🗑 Clear All Data</button>
+                  <button className="btn-clear" onClick={clearAllData}>🗑 Clear All Data</button>
                 </div>
 
                 <div className="table-wrap">
